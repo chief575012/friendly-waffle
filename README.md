@@ -1,83 +1,102 @@
-# WaffleUI
+# WaffleUI v2
 
-A modern, animated Roblox UI library in a single Lua file.
+A modern, animated, feature-rich Roblox UI library in a single Lua file.
 
-## Features
+## What's new in v2
 
-- Draggable window with open/close/minimize animations
-- Tab sidebar with icons and smooth active-state transitions
-- Components:
-  - Section headers
-  - Labels
-  - Buttons (hover + click pulse)
-  - Toggles (animated switch)
-  - Sliders (snap + drag, mouse + touch)
-  - Dropdowns (expand/collapse)
-  - Textboxes
-  - Keybinds (capture a key, then fire callback)
-- Notifications (top-right stack with slide-in/out)
-- Dark and Light themes, or pass a custom theme table
-- Configurable hotkey to toggle UI visibility
-- Auto-parents to `CoreGui` when possible, falls back to `PlayerGui`
+### Bug fixes
+- **No more listener leaks.** Every subsystem (slider, keybind, drag, hotkey, resize) routes its `UserInputService` connections through a `ConnectionBag` that's disconnected on `Window:Destroy()`.
+- **Subtitle layout fixed.** No longer reads `TextBounds` on frame 0; uses `AutomaticSize` + horizontal `UIListLayout`.
+- **Notification slide no longer fights `UIListLayout`.** Uses padding animation instead of `Position`.
+- **Hotkey toggle race fixed.** Uses a cancel token instead of racing `task.wait` against the visibility flag.
+- **Dropdown `SetOptions` glitch fixed.** Collapses the list before rebuilding.
+
+### New components
+- **ColorPicker** (HSV canvas + hue bar)
+- **MultiSelect** (checkbox-style multi-value dropdown)
+- **RadioGroup**
+- **Paragraph** (title + wrapped body, auto-height)
+- **Divider**
+- **ProgressBar**
+- **Searchable dropdowns** (`Searchable = true`)
+
+### New features
+- **Live theme swap**: `Window:SetTheme("Midnight")` repaints every component
+- **Three built-in themes**: `Dark`, `Light`, `Midnight` — plus custom tables
+- **Tab search** in the sidebar
+- **Window resize handle** (drag the bottom-right corner)
+- **Ripple effect** on buttons
+- **Notification severities**: `Info`, `Success`, `Warning`, `Error` — click to dismiss, explicit close button
+- **Config save/load** via `ConfigFile = "MyHub.json"`. Set `Flag = "..."` on any component to persist it. Uses executor `writefile` when available, falls back to in-memory.
+- `Window:SelectTab(name)` helper
+- `component:Destroy()` on everything
 
 ## Files
-
 - `src/UILibrary.lua` — the library (use as a `ModuleScript`)
-- `src/Example.client.lua` — a demo `LocalScript` showing all components
+- `src/Example.client.lua` — a demo `LocalScript` that exercises every component
 
 ## Quick start
-
-Put both files in `StarterPlayer > StarterPlayerScripts`:
-
-- `UILibrary` as a `ModuleScript`
-- `Example` as a `LocalScript` next to it
-
-Then run the game.
-
-## Minimal example
 
 ```lua
 local WaffleUI = require(script.Parent.UILibrary)
 
 local Window = WaffleUI:CreateWindow({
-    Title    = "My Hub",
-    SubTitle = "v1.0",
-    Theme    = "Dark",                 -- or "Light" or a table
-    Keybind  = Enum.KeyCode.RightShift, -- toggle visibility
+    Title      = "My Hub",
+    SubTitle   = "v1.0",
+    Theme      = "Midnight",               -- Dark | Light | Midnight | table
+    Keybind    = Enum.KeyCode.RightShift,  -- toggle visibility
+    ConfigFile = "MyHub.json",             -- optional persistence
 })
 
-local Tab = Window:CreateTab("Main", "rbxassetid://10734950309")
+local Main = Window:CreateTab("Main", "rbxassetid://10734950309")
 
-Tab:AddSection("Player")
-Tab:AddButton({ Text = "Hello", Callback = function() print("hi") end })
-Tab:AddToggle({ Text = "Enable X", Default = false, Callback = print })
-Tab:AddSlider({ Text = "Speed", Min = 16, Max = 200, Default = 16,
-                Increment = 1, Callback = print })
-Tab:AddDropdown({ Text = "Mode", Options = {"A","B","C"}, Default = "A",
-                  Callback = print })
-Tab:AddTextbox({ Text = "Name", Placeholder = "...", Callback = print })
-Tab:AddKeybind({ Text = "Panic", Default = Enum.KeyCode.P,
-                 Callback = function() print("panic") end })
+Main:AddSection("Player")
+Main:AddSlider({ Text = "Speed", Min = 16, Max = 200, Default = 16,
+                 Flag = "speed", Callback = print })
+Main:AddToggle({ Text = "God Mode", Flag = "god", Callback = print })
+Main:AddDropdown({ Text = "Weapon", Options = {"Sword","Gun","Bow"},
+                   Searchable = true, Flag = "weapon", Callback = print })
+Main:AddColorPicker({ Text = "Tint", Default = Color3.new(1, 0.5, 0.2),
+                      Flag = "tint", Callback = print })
 
-WaffleUI:Notify({ Title = "Loaded", Text = "Welcome!", Duration = 4 })
+WaffleUI:Notify({ Title = "Loaded", Text = "Welcome!", Severity = "Success" })
 ```
 
-## Custom theme
+## Component reference
+
+| Method | Purpose |
+|---|---|
+| `tab:AddSection(text)` | Uppercase header |
+| `tab:AddLabel(text)` | Single-line label |
+| `tab:AddParagraph{Title, Text}` | Auto-height boxed paragraph |
+| `tab:AddDivider()` | 1px horizontal rule |
+| `tab:AddButton{Text, Callback}` | Button with hover + ripple |
+| `tab:AddToggle{Text, Default, Flag, Callback}` | Animated switch |
+| `tab:AddSlider{Text, Min, Max, Default, Increment, Format, Flag, Callback}` | Snap slider (mouse + touch) |
+| `tab:AddProgress{Text, Min, Max, Default}` | Read-only progress bar |
+| `tab:AddDropdown{Text, Options, Default, Searchable, Flag, Callback}` | Single-select (optional search) |
+| `tab:AddMultiSelect{Text, Options, Default, Flag, Callback}` | Multi-value dropdown |
+| `tab:AddRadioGroup{Text, Options, Default, Flag, Callback}` | Exclusive radio |
+| `tab:AddTextbox{Text, Placeholder, Default, Numeric, Flag, Callback}` | Text input, optional numeric filter |
+| `tab:AddKeybind{Text, Default, Flag, Callback}` | Rebindable key (`Esc` to clear) |
+| `tab:AddColorPicker{Text, Default, Flag, Callback}` | HSV canvas + hue |
+
+Every component returns an API with `:Set`, `:Get` (where applicable), and `:Destroy`.
+
+## Custom themes
 
 ```lua
-WaffleUI:CreateWindow({
-    Title = "Custom",
-    Theme = {
-        Background   = Color3.fromRGB(18, 18, 22),
-        Surface      = Color3.fromRGB(28, 28, 34),
-        Elevated     = Color3.fromRGB(40, 40, 48),
-        Stroke       = Color3.fromRGB(70, 70, 80),
-        Primary      = Color3.fromRGB(255, 120, 200),
-        PrimaryHover = Color3.fromRGB(255, 150, 215),
-        Text         = Color3.fromRGB(240, 240, 245),
-        SubText      = Color3.fromRGB(170, 170, 180),
-        Accent       = Color3.fromRGB(120, 220, 160),
-        Danger       = Color3.fromRGB(230, 90, 90),
-    },
+Window:SetTheme({
+    Background   = Color3.fromRGB(18, 18, 22),
+    Surface      = Color3.fromRGB(28, 28, 34),
+    Elevated     = Color3.fromRGB(40, 40, 48),
+    Stroke       = Color3.fromRGB(70, 70, 80),
+    Primary      = Color3.fromRGB(255, 120, 200),
+    PrimaryHover = Color3.fromRGB(255, 150, 215),
+    Text         = Color3.fromRGB(240, 240, 245),
+    SubText      = Color3.fromRGB(170, 170, 180),
+    Accent       = Color3.fromRGB(120, 220, 160),
+    Warning      = Color3.fromRGB(240, 180, 70),
+    Danger       = Color3.fromRGB(230, 90, 90),
 })
 ```
