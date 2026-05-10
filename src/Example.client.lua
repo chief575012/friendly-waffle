@@ -1,5 +1,5 @@
 --[[
-    WaffleUI v2.0.0 — example usage.
+    WaffleUI v3.0.0 — example usage.
     Place this as a LocalScript in StarterPlayer > StarterPlayerScripts, with
     UILibrary.lua next to it as a ModuleScript.
 ]]
@@ -8,10 +8,10 @@ local UILibrary = require(script.Parent:WaitForChild("UILibrary"))
 
 local Window = UILibrary:CreateWindow({
     Title      = "Waffle Hub",
-    SubTitle   = "v2.0.0",
-    Theme      = "Dark",
+    SubTitle   = "v3.0.0",
+    Theme      = "Midnight",
     Keybind    = Enum.KeyCode.RightShift,
-    ConfigFile = "WaffleHub.json", -- persisted via writefile on supported execs
+    ConfigFile = "WaffleHub.json",
 })
 
 -- ========= MAIN =========
@@ -20,10 +20,10 @@ local Main = Window:CreateTab("Main", "rbxassetid://10734950309")
 Main:AddSection("Player")
 Main:AddParagraph({
     Title = "Welcome",
-    Text  = "Tweak your character here. Settings marked with a Flag are saved automatically.",
+    Text  = "Drag the window, type in the tab search, resize from the bottom-right. Flagged settings persist.",
 })
 
-Main:AddSlider({
+local speed = Main:AddSlider({
     Text = "WalkSpeed", Min = 16, Max = 250, Default = 16, Increment = 1,
     Flag = "walkspeed",
     Callback = function(v)
@@ -32,9 +32,10 @@ Main:AddSlider({
         if h then h.WalkSpeed = v end
     end,
 })
+Main:AttachTooltip(speed, "Drag or click the bar")
 
-Main:AddSlider({
-    Text = "JumpPower", Min = 50, Max = 500, Default = 50, Increment = 5,
+Main:AddStepper({
+    Text = "Jump Power", Min = 50, Max = 500, Increment = 10, Default = 50,
     Flag = "jumppower",
     Callback = function(v)
         local c = game.Players.LocalPlayer.Character
@@ -45,29 +46,33 @@ Main:AddSlider({
 
 Main:AddToggle({
     Text = "Infinite Jump", Default = false, Flag = "infjump",
-    Callback = function(state)
-        getgenv = getgenv or function() return _G end
-        getgenv().InfJumpEnabled = state
-        if state and not getgenv().InfJumpConn then
-            getgenv().InfJumpConn = game:GetService("UserInputService").JumpRequest:Connect(function()
-                if getgenv().InfJumpEnabled then
-                    local c = game.Players.LocalPlayer.Character
-                    local h = c and c:FindFirstChildOfClass("Humanoid")
-                    if h then h:ChangeState(Enum.HumanoidStateType.Jumping) end
-                end
-            end)
-        end
-    end,
+    Callback = function(state) print("InfJump:", state) end,
 })
 
 Main:AddButton({
-    Text = "Reset Character",
+    Text = "Reset Character (confirm)",
     Callback = function()
-        local c = game.Players.LocalPlayer.Character
-        local h = c and c:FindFirstChildOfClass("Humanoid")
-        if h then h.Health = 0 end
+        Window:Confirm({
+            Title   = "Reset character?",
+            Message = "Your current state will be lost. Continue?",
+            ConfirmText = "Reset",
+            OnConfirm = function()
+                local c = game.Players.LocalPlayer.Character
+                local h = c and c:FindFirstChildOfClass("Humanoid")
+                if h then h.Health = 0 end
+            end,
+        })
     end,
 })
+
+-- ========= LOG =========
+local LogTab = Window:CreateTab("Log", "rbxassetid://10734898355")
+LogTab:AddSection("Console")
+local console = LogTab:AddConsole({ Text = "OUTPUT", Height = 180, MaxLines = 300 })
+
+LogTab:AddButton({ Text = "Log Info",  Callback = function() console:Log("Clicked at " .. os.date("%X")) end })
+LogTab:AddButton({ Text = "Log Warn",  Callback = function() console:Warn("Something is suspicious") end })
+LogTab:AddButton({ Text = "Log Error", Callback = function() console:Error("Boom!") end })
 
 -- ========= VISUALS =========
 local Visuals = Window:CreateTab("Visuals", "rbxassetid://10747384394")
@@ -82,7 +87,7 @@ Visuals:AddDropdown({
     Options    = { "Morning", "Noon", "Sunset", "Night" },
     Default    = "Noon",
     Flag       = "tod",
-    Searchable = false,
+    Searchable = true,
     Callback = function(v)
         local L = game:GetService("Lighting")
         local map = { Morning = "07:00:00", Noon = "12:00:00", Sunset = "18:00:00", Night = "22:00:00" }
@@ -90,63 +95,43 @@ Visuals:AddDropdown({
     end,
 })
 
-Visuals:AddSection("Pick & Mix")
 Visuals:AddColorPicker({
-    Text = "Highlight Color", Default = Color3.fromRGB(120, 200, 255), Flag = "hl_color",
+    Text = "Highlight", Default = Color3.fromRGB(120, 200, 255), Flag = "hl_color",
     Callback = function(c) print("color:", c) end,
 })
-Visuals:AddMultiSelect({
-    Text    = "Effects",
-    Options = { "Bloom", "Blur", "ColorCorrection", "DepthOfField", "SunRays" },
-    Default = { "Bloom", "ColorCorrection" },
-    Flag    = "effects",
-    Callback = function(list) print("fx:", table.concat(list, ", ")) end,
-})
-Visuals:AddRadioGroup({
-    Text    = "Render Mode",
-    Options = { "Quality", "Balanced", "Performance" },
-    Default = "Balanced",
-    Flag    = "render_mode",
-    Callback = print,
-})
-
-Visuals:AddDivider()
-Visuals:AddProgress({ Text = "Loading Demo", Min = 0, Max = 100, Default = 35 })
 
 -- ========= SETTINGS =========
-local Settings = Window:CreateTab("Settings", "rbxassetid://10734898355")
+local Settings = Window:CreateTab("Settings")
 
-Settings:AddSection("Library")
 Settings:AddDropdown({
-    Text       = "Theme",
-    Options    = { "Dark", "Light", "Midnight" },
-    Default    = "Dark",
-    Searchable = true,
-    Flag       = "theme",
+    Text = "Theme", Options = { "Dark", "Light", "Midnight", "Ocean" },
+    Default = "Midnight", Searchable = true, Flag = "theme",
     Callback = function(v) Window:SetTheme(v) end,
 })
-Settings:AddTextbox({
-    Text = "Nickname", Placeholder = "Enter...", Flag = "nickname",
-    Callback = function(text, enter)
-        if enter then Window:Notify({
-            Title = "Saved", Text = "Nickname: " .. text,
-            Severity = "Success", Duration = 3,
-        }) end
+Settings:AddButton({
+    Text = "Notify With Actions",
+    Callback = function()
+        Window:Notify({
+            Title    = "Confirm action",
+            Text     = "This demonstrates notification action buttons.",
+            Severity = "Warning",
+            Duration = 10,
+            Actions = {
+                { Text = "Yes", Primary = true,  Callback = function() print("yes") end },
+                { Text = "No",                    Callback = function() print("no")  end },
+            },
+        })
     end,
-})
-Settings:AddKeybind({
-    Text = "Panic Hide", Default = Enum.KeyCode.P, Flag = "panic_key",
-    Callback = function() Window:Notify({ Title = "Panic!", Severity = "Warning" }) end,
 })
 Settings:AddButton({
     Text = "Unload UI",
     Callback = function() Window:Destroy() end,
 })
 
--- Notify once on load
+-- Notify on load (with severity + countdown bar)
 UILibrary:Notify({
-    Title    = "Waffle Hub loaded",
+    Title    = "Waffle Hub v3 loaded",
     Text     = "Press Right Shift to toggle the menu.",
     Severity = "Success",
-    Duration = 5,
+    Duration = 6,
 })
