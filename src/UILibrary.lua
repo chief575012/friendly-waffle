@@ -240,6 +240,19 @@ local Themes = {
         Warning      = Color3.fromRGB(255, 200, 100),
         Danger       = Color3.fromRGB(255, 110, 110),
     },
+    Ocean = {
+        Background   = Color3.fromRGB(10, 22, 34),
+        Surface      = Color3.fromRGB(16, 32, 48),
+        Elevated     = Color3.fromRGB(24, 44, 62),
+        Stroke       = Color3.fromRGB(48, 78, 102),
+        Primary      = Color3.fromRGB(80, 200, 220),
+        PrimaryHover = Color3.fromRGB(120, 220, 235),
+        Text         = Color3.fromRGB(220, 240, 250),
+        SubText      = Color3.fromRGB(130, 160, 185),
+        Accent       = Color3.fromRGB(180, 230, 130),
+        Warning      = Color3.fromRGB(255, 190, 90),
+        Danger       = Color3.fromRGB(255, 120, 140),
+    },
 }
 
 local function resolveTheme(t)
@@ -308,8 +321,10 @@ end
 
 --==============================================================================
 -- Draggable helper (uses ConnectionBag)
+-- v3: optional `clampToViewport` keeps the window from being dragged off
+-- screen. Enabled for windows, disabled by default for other handles.
 --==============================================================================
-local function makeDraggable(handle, target, bag)
+local function makeDraggable(handle, target, bag, clampToViewport)
     local dragging, dragStart, startPos
     bag:Add(handle.InputBegan:Connect(function(input)
         if input.UserInputType == Enum.UserInputType.MouseButton1
@@ -333,9 +348,28 @@ local function makeDraggable(handle, target, bag)
         if input.UserInputType == Enum.UserInputType.MouseMovement
             or input.UserInputType == Enum.UserInputType.Touch then
             local delta = input.Position - dragStart
+            local newX = startPos.X.Offset + delta.X
+            local newY = startPos.Y.Offset + delta.Y
+
+            if clampToViewport then
+                local cam = workspace.CurrentCamera
+                if cam then
+                    local vp    = cam.ViewportSize
+                    local size  = target.AbsoluteSize
+                    -- Keep at least 80px of the window on-screen so the user
+                    -- can always grab the titlebar to drag it back.
+                    local minX = 80 - size.X
+                    local maxX = vp.X - 80
+                    local minY = 0
+                    local maxY = vp.Y - 40
+                    newX = math.clamp(newX, minX, maxX)
+                    newY = math.clamp(newY, minY, maxY)
+                end
+            end
+
             target.Position = UDim2.new(
-                startPos.X.Scale, startPos.X.Offset + delta.X,
-                startPos.Y.Scale, startPos.Y.Offset + delta.Y
+                startPos.X.Scale, newX,
+                startPos.Y.Scale, newY
             )
         end
     end))
@@ -379,7 +413,7 @@ end
 -- Library root
 --==============================================================================
 local WaffleUI = {
-    Version      = "2.0.0",
+    Version      = "3.0.0",
     _windows     = {},
     _notifyScreen = nil,
     _notifyStack = nil,
@@ -430,6 +464,16 @@ local function ensureNotifyStack()
     return stack
 end
 
+--==============================================================================
+-- Notify v3:
+--   * Real horizontal slide: the card is absolutely positioned inside a
+--     fixed-height wrap, so animating Position.X.Offset no longer fights
+--     UIListLayout (v2 abused UIPadding which only resized content, never
+--     translated it — that was the visible "notification is broken" bug).
+--   * Countdown progress bar at the bottom that drains over `duration`.
+--   * Optional `Actions = { {Text, Callback}, ... }` for confirm-style popups.
+--   * Returns a handle: { Dismiss, Update, SetSeverity }.
+--==============================================================================
 function WaffleUI:Notify(opts)
     opts = opts or {}
     local title    = opts.Title    or "Notification"
@@ -441,73 +485,84 @@ function WaffleUI:Notify(opts)
 
     local stack = ensureNotifyStack()
 
-    -- Wrap: outer holds layout-controlled position, inner slides via padding
+    -- Measure helpers: width 300 is fixed; height follows content via AutomaticSize.
+    local CARD_W = 300
+
+    -- Outer wrap is what the UIListLayout positions.
     local wrap = new("Frame", {
-        Size                   = UDim2.new(1, 0, 0, 0),
+        Size                   = UDim2.new(0, CARD_W, 0, 0),
         AutomaticSize          = Enum.AutomaticSize.Y,
         BackgroundTransparency = 1,
         Parent                 = stack,
+        ClipsDescendants       = false,
     })
-    local wrapPad = padding(0, wrap)
-    wrapPad.PaddingLeft = UDim.new(0, 340) -- start off-screen right
 
+    -- Card is absolutely positioned INSIDE wrap. We animate its X offset for
+    -- the real slide animation. It AutomaticSize.Y so wrap follows its height.
     local card = new("Frame", {
+        AnchorPoint            = Vector2.new(0, 0),
         Size                   = UDim2.new(1, 0, 0, 0),
         AutomaticSize          = Enum.AutomaticSize.Y,
+        Position               = UDim2.new(0, CARD_W + 40, 0, 0), -- start off-screen right
         BackgroundColor3       = theme.Surface,
         BackgroundTransparency = 0,
         Parent                 = wrap,
         ClipsDescendants       = true,
     })
     corner(10, card)
-    stroke(theme.Stroke, 1, card)
+    local cardStroke = stroke(theme.Stroke, 1, card)
     padding(12, card)
 
     new("UIListLayout", {
-        Padding   = UDim.new(0, 4),
+        Padding   = UDim.new(0, 6),
         SortOrder = Enum.SortOrder.LayoutOrder,
         Parent    = card,
     })
 
+    -- Color bar (left edge)
     local bar = new("Frame", {
         AnchorPoint      = Vector2.new(0, 0),
         Size             = UDim2.new(0, 3, 1, 0),
         Position         = UDim2.new(0, -9, 0, 0),
         BackgroundColor3 = barColor,
         BorderSizePixel  = 0,
+        ZIndex           = 2,
         Parent           = card,
     })
     corner(2, bar)
 
+    -- Title row + close button
     local titleRow = new("Frame", {
         Size                   = UDim2.new(1, 0, 0, 18),
         BackgroundTransparency = 1,
-        Parent                 = card,
         LayoutOrder            = 1,
+        Parent                 = card,
     })
-    new("TextLabel", {
-        Size                   = UDim2.new(1, -24, 1, 0),
+    local titleLabel = new("TextLabel", {
+        Size                   = UDim2.new(1, -22, 1, 0),
         BackgroundTransparency = 1,
         Font                   = Enum.Font.GothamBold,
         TextSize               = 14,
         TextColor3             = theme.Text,
         TextXAlignment         = Enum.TextXAlignment.Left,
+        TextTruncate           = Enum.TextTruncate.AtEnd,
         Text                   = title,
         Parent                 = titleRow,
     })
     local closeBtn = new("TextButton", {
-        Size             = UDim2.new(0, 18, 0, 18),
-        Position         = UDim2.new(1, -18, 0, 0),
+        Size                   = UDim2.new(0, 18, 0, 18),
+        Position               = UDim2.new(1, -18, 0, 0),
         BackgroundTransparency = 1,
-        Font             = Enum.Font.GothamBold,
-        TextSize         = 14,
-        TextColor3       = theme.SubText,
-        Text             = "x",
-        AutoButtonColor  = false,
-        Parent           = titleRow,
+        Font                   = Enum.Font.GothamBold,
+        TextSize               = 14,
+        TextColor3             = theme.SubText,
+        Text                   = "x",
+        AutoButtonColor        = false,
+        Parent                 = titleRow,
     })
 
-    new("TextLabel", {
+    -- Body text
+    local bodyLabel = new("TextLabel", {
         Size                   = UDim2.new(1, 0, 0, 0),
         AutomaticSize          = Enum.AutomaticSize.Y,
         BackgroundTransparency = 1,
@@ -521,17 +576,99 @@ function WaffleUI:Notify(opts)
         Parent                 = card,
     })
 
+    -- Forward-declare dismiss state BEFORE actions loop so button callbacks
+    -- close over the right binding. (Lua closures capture binding not value,
+    -- and a local declared *after* the loop would shadow the upvalue with
+    -- nil at capture time.)
     local dismissed = false
-    local function dismiss()
+    local dismissFn
+
+    -- Action buttons row (optional)
+    local actionRow
+    if opts.Actions and #opts.Actions > 0 then
+        actionRow = new("Frame", {
+            Size                   = UDim2.new(1, 0, 0, 26),
+            BackgroundTransparency = 1,
+            LayoutOrder            = 3,
+            Parent                 = card,
+        })
+        new("UIListLayout", {
+            FillDirection      = Enum.FillDirection.Horizontal,
+            HorizontalAlignment = Enum.HorizontalAlignment.Right,
+            Padding            = UDim.new(0, 6),
+            SortOrder          = Enum.SortOrder.LayoutOrder,
+            Parent             = actionRow,
+        })
+        for i, action in ipairs(opts.Actions) do
+            local abtn = new("TextButton", {
+                Size             = UDim2.new(0, 70, 1, 0),
+                BackgroundColor3 = (action.Primary and theme.Primary) or theme.Elevated,
+                Font             = Enum.Font.GothamMedium,
+                TextSize         = 12,
+                TextColor3       = action.Primary and Color3.new(1, 1, 1) or theme.Text,
+                Text             = action.Text or "OK",
+                AutoButtonColor  = false,
+                LayoutOrder      = i,
+                Parent           = actionRow,
+            })
+            corner(6, abtn)
+            stroke(theme.Stroke, 1, abtn)
+            local cb = action.Callback
+            abtn.MouseButton1Click:Connect(function()
+                if cb then task.spawn(cb) end
+                if action.KeepOpen ~= true and dismissFn then dismissFn() end
+            end)
+        end
+    end
+
+    -- Countdown progress bar (drains over duration)
+    local progressBg, progressFill
+    if duration > 0 then
+        progressBg = new("Frame", {
+            Size             = UDim2.new(1, 0, 0, 2),
+            BackgroundColor3 = theme.Stroke,
+            BorderSizePixel  = 0,
+            LayoutOrder      = 10,
+            Parent           = card,
+        })
+        progressFill = new("Frame", {
+            Size             = UDim2.new(1, 0, 1, 0),
+            BackgroundColor3 = barColor,
+            BorderSizePixel  = 0,
+            Parent           = progressBg,
+        })
+    end
+
+    -- State machine -----------------------------------------------------------
+    local handle = {}
+
+    function handle:Dismiss()
+        dismissFn()
+    end
+
+    function handle:Update(newTitle, newText)
+        if newTitle then titleLabel.Text = newTitle end
+        if newText  then bodyLabel.Text  = newText  end
+    end
+
+    function handle:SetSeverity(sev)
+        local c = theme[NOTIFY_COLORS[sev] or "Primary"]
+        bar.BackgroundColor3 = c
+        if progressFill then progressFill.BackgroundColor3 = c end
+    end
+
+    function dismissFn()
         if dismissed then return end
         dismissed = true
-        tween(wrapPad, QUICK, { PaddingLeft = UDim.new(0, 340) })
-        tween(card,    QUICK, { BackgroundTransparency = 1 })
+        tween(card, QUICK, {
+            Position               = UDim2.new(0, CARD_W + 40, 0, 0),
+            BackgroundTransparency = 1,
+        })
         task.delay(0.2, function() wrap:Destroy() end)
     end
 
-    -- Click card or close button to dismiss
-    local clickHit = new("TextButton", {
+    -- Click-anywhere-to-dismiss hit region (behind the children)
+    local hit = new("TextButton", {
         Size                   = UDim2.new(1, 0, 1, 0),
         BackgroundTransparency = 1,
         Text                   = "",
@@ -539,13 +676,40 @@ function WaffleUI:Notify(opts)
         ZIndex                 = 0,
         Parent                 = card,
     })
-    clickHit.MouseButton1Click:Connect(dismiss)
-    closeBtn.MouseButton1Click:Connect(dismiss)
+    hit.MouseButton1Click:Connect(dismissFn)
+    closeBtn.MouseButton1Click:Connect(dismissFn)
 
     -- Slide in
-    tween(wrapPad, MEDIUM, { PaddingLeft = UDim.new(0, 0) })
+    tween(card, MEDIUM, { Position = UDim2.new(0, 0, 0, 0) })
 
-    task.delay(duration, dismiss)
+    -- Countdown (pauses if hovered)
+    if duration > 0 then
+        task.spawn(function()
+            local remaining = duration
+            local startClock = os.clock()
+            local paused = false
+
+            card.MouseEnter:Connect(function() paused = true  end)
+            card.MouseLeave:Connect(function() paused = false end)
+
+            while remaining > 0 and not dismissed do
+                task.wait(0.05)
+                if not paused then
+                    local dt = os.clock() - startClock
+                    startClock = os.clock()
+                    remaining = remaining - dt
+                    if progressFill then
+                        progressFill.Size = UDim2.new(math.clamp(remaining / duration, 0, 1), 0, 1, 0)
+                    end
+                else
+                    startClock = os.clock()
+                end
+            end
+            if not dismissed then dismissFn() end
+        end)
+    end
+
+    return handle
 end
 
 --==============================================================================
@@ -783,13 +947,20 @@ function Components.Toggle(parent, dispatcher, opts, saveHook)
 end
 
 -- Slider ----------------------------------------------------------------------
+-- Bug fixes from v2:
+--   * Divide-by-zero when Min == Max: guarded with `range` local.
+--   * `string.format` crashed when Default was nil but Min was: clamped first.
+--   * Touch input on mobile sometimes never released `dragging` because
+--     InputEnded fires a different UserInputType; now accepts any End state.
 function Components.Slider(parent, dispatcher, bag, opts, saveHook)
     opts = opts or {}
-    local minV = opts.Min       or 0
-    local maxV = opts.Max       or 100
-    local step = opts.Increment or 1
-    local fmt  = opts.Format    or "%g"
-    local val  = math.clamp(opts.Default or minV, minV, maxV)
+    local minV  = opts.Min       or 0
+    local maxV  = opts.Max       or 100
+    local step  = opts.Increment or 1
+    local fmt   = opts.Format    or "%g"
+    local range = maxV - minV
+    if range <= 0 then range = 1 end -- guard: Min==Max would NaN everything
+    local val   = math.clamp(opts.Default or minV, minV, maxV)
 
     local row = new("Frame", {
         Size   = UDim2.new(1, 0, 0, 52),
@@ -825,7 +996,7 @@ function Components.Slider(parent, dispatcher, bag, opts, saveHook)
     })
     corner(3, bar)
     local fill = new("Frame", {
-        Size   = UDim2.new((val - minV) / (maxV - minV), 0, 1, 0),
+        Size   = UDim2.new((val - minV) / range, 0, 1, 0),
         Parent = bar,
     })
     corner(3, fill)
@@ -857,13 +1028,13 @@ function Components.Slider(parent, dispatcher, bag, opts, saveHook)
 
     local function setFromRatio(ratio, silent)
         ratio = math.clamp(ratio, 0, 1)
-        local raw = minV + ratio * (maxV - minV)
+        local raw = minV + ratio * range
         local snapped = math.clamp(round(raw), minV, maxV)
         if snapped ~= val then
             val = snapped
             valueText.Text = string.format(fmt, val)
             tween(fill, TweenInfo.new(0.08), {
-                Size = UDim2.new((val - minV) / (maxV - minV), 0, 1, 0),
+                Size = UDim2.new((val - minV) / range, 0, 1, 0),
             })
             if saveHook then saveHook(val) end
             if not silent and opts.Callback then task.spawn(opts.Callback, val) end
@@ -899,18 +1070,21 @@ function Components.Slider(parent, dispatcher, bag, opts, saveHook)
 
     return {
         frame    = row,
-        Set      = function(_, v, silent) setFromRatio((v - minV) / (maxV - minV), silent) end,
+        Set      = function(_, v, silent) setFromRatio((v - minV) / range, silent) end,
         Get      = function() return val end,
         Destroy  = function() row:Destroy() end,
     }
 end
 
 -- ProgressBar -----------------------------------------------------------------
+-- Same divide-by-zero guard as Slider.
 function Components.ProgressBar(parent, dispatcher, opts)
     opts = opts or {}
-    local minV = opts.Min or 0
-    local maxV = opts.Max or 100
-    local val  = math.clamp(opts.Default or 0, minV, maxV)
+    local minV  = opts.Min or 0
+    local maxV  = opts.Max or 100
+    local range = maxV - minV
+    if range <= 0 then range = 1 end
+    local val   = math.clamp(opts.Default or 0, minV, maxV)
 
     local row = new("Frame", {
         Size   = UDim2.new(1, 0, 0, 44),
@@ -946,7 +1120,7 @@ function Components.ProgressBar(parent, dispatcher, opts)
     })
     corner(4, bar)
     local fill = new("Frame", {
-        Size   = UDim2.new((val - minV) / (maxV - minV), 0, 1, 0),
+        Size   = UDim2.new((val - minV) / range, 0, 1, 0),
         Parent = bar,
     })
     corner(4, fill)
@@ -965,7 +1139,7 @@ function Components.ProgressBar(parent, dispatcher, opts)
         Set   = function(_, v)
             val = math.clamp(v, minV, maxV)
             valueText.Text = tostring(val)
-            tween(fill, QUICK, { Size = UDim2.new((val - minV) / (maxV - minV), 0, 1, 0) })
+            tween(fill, QUICK, { Size = UDim2.new((val - minV) / range, 0, 1, 0) })
         end,
         Get     = function() return val end,
         Destroy = function() row:Destroy() end,
@@ -1089,9 +1263,14 @@ function Components.Dropdown(parent, dispatcher, opts, saveHook)
             if c:IsA("GuiButton") then c:Destroy() end
         end
         local filtered = {}
+        -- Convert filter once (and only if present) to avoid recomputing per-option.
+        local lowerFilter = nil
+        if filterText and filterText ~= "" then
+            lowerFilter = string.lower(filterText)
+        end
         for _, o in ipairs(options) do
-            if not filterText or filterText == ""
-                or string.find(string.lower(tostring(o)), string.lower(filterText), 1, true) then
+            if not lowerFilter
+                or string.find(string.lower(tostring(o)), lowerFilter, 1, true) then
                 table.insert(filtered, o)
             end
         end
@@ -1130,7 +1309,10 @@ function Components.Dropdown(parent, dispatcher, opts, saveHook)
         local filtered = rebuild(searchBox and searchBox.Text or nil)
         local h = computeOpenHeight(filtered)
         tween(row, MEDIUM, { Size = UDim2.new(1, 0, 0, h) })
-        scroll.Size = UDim2.new(1, 0, 0, math.min(#filtered, 5) * 28 + (math.min(#filtered, 5) - 1) * 2)
+        -- Guard: with 0 filtered options, (min - 1) * 2 would be -2.
+        local shown = math.min(#filtered, 5)
+        local listH = (shown > 0) and (shown * 28 + (shown - 1) * 2) or 0
+        scroll.Size = UDim2.new(1, 0, 0, listH)
     end
 
     local function closeList()
@@ -1486,6 +1668,23 @@ function Components.Textbox(parent, dispatcher, opts, saveHook)
 end
 
 -- Keybind ---------------------------------------------------------------------
+-- Bug fixes from v2:
+--   * Capturing while a modifier (Shift/Ctrl/Alt/LeftMeta/RightMeta) is held
+--     would bind the modifier, not the intended key. Now we reject pure
+--     modifier keys on capture and wait for a real alphanumeric/function key.
+--   * If the user pressed Escape to clear, and the captured key state didn't
+--     properly reset, the next capture would immediately fire. Fixed.
+local MODIFIER_KEYS = {
+    [Enum.KeyCode.LeftShift]   = true,
+    [Enum.KeyCode.RightShift]  = true,
+    [Enum.KeyCode.LeftControl] = true,
+    [Enum.KeyCode.RightControl]= true,
+    [Enum.KeyCode.LeftAlt]     = true,
+    [Enum.KeyCode.RightAlt]    = true,
+    [Enum.KeyCode.LeftMeta]    = true,
+    [Enum.KeyCode.RightMeta]   = true,
+}
+
 function Components.Keybind(parent, dispatcher, bag, opts, saveHook)
     opts = opts or {}
     local current   = opts.Default
@@ -1534,6 +1733,9 @@ function Components.Keybind(parent, dispatcher, bag, opts, saveHook)
 
     bag:Add(UserInputService.InputBegan:Connect(function(input, processed)
         if capturing and input.UserInputType == Enum.UserInputType.Keyboard then
+            -- Ignore modifier-only captures; user probably hasn't pressed the real key yet.
+            if MODIFIER_KEYS[input.KeyCode] then return end
+
             capturing = false
             if input.KeyCode == Enum.KeyCode.Escape then
                 current = nil
@@ -1546,6 +1748,8 @@ function Components.Keybind(parent, dispatcher, bag, opts, saveHook)
             return
         end
         if not processed and not capturing and current and input.KeyCode == current then
+            -- Don't fire while a TextBox is focused (was eating keystrokes).
+            if UserInputService:GetFocusedTextBox() then return end
             if opts.Callback then task.spawn(opts.Callback) end
         end
     end))
@@ -1561,15 +1765,311 @@ function Components.Keybind(parent, dispatcher, bag, opts, saveHook)
     }
 end
 
+-- Stepper (numeric input with +/- buttons) ------------------------------------
+-- A compact number picker for integer/float values. Unlike Slider it doesn't
+-- show a bar; useful when you want precision without visual noise.
+function Components.Stepper(parent, dispatcher, opts, saveHook)
+    opts = opts or {}
+    local minV = opts.Min       or 0
+    local maxV = opts.Max       or 100
+    local step = opts.Increment or 1
+    local fmt  = opts.Format    or "%g"
+    local val  = math.clamp(opts.Default or minV, minV, maxV)
+
+    local row = new("Frame", {
+        Size   = UDim2.new(1, 0, 0, 34),
+        Parent = parent,
+    })
+    corner(8, row)
+    local strokeInst = stroke(Color3.new(), 1, row)
+
+    local label = new("TextLabel", {
+        Size                   = UDim2.new(1, -110, 1, 0),
+        Position               = UDim2.new(0, 12, 0, 0),
+        BackgroundTransparency = 1,
+        Font                   = Enum.Font.GothamMedium,
+        TextSize               = 14,
+        TextXAlignment         = Enum.TextXAlignment.Left,
+        Text                   = opts.Text or "Stepper",
+        Parent                 = row,
+    })
+
+    local minusBtn = new("TextButton", {
+        Size            = UDim2.new(0, 24, 0, 24),
+        Position        = UDim2.new(1, -100, 0.5, -12),
+        Font            = Enum.Font.GothamBold,
+        TextSize        = 16,
+        Text            = "-",
+        AutoButtonColor = false,
+        Parent          = row,
+    })
+    corner(6, minusBtn)
+
+    local valueBox = new("TextBox", {
+        Size             = UDim2.new(0, 40, 0, 24),
+        Position         = UDim2.new(1, -72, 0.5, -12),
+        Font             = Enum.Font.GothamBold,
+        TextSize         = 13,
+        TextXAlignment   = Enum.TextXAlignment.Center,
+        ClearTextOnFocus = false,
+        Text             = string.format(fmt, val),
+        Parent           = row,
+    })
+    corner(6, valueBox)
+
+    local plusBtn = new("TextButton", {
+        Size            = UDim2.new(0, 24, 0, 24),
+        Position        = UDim2.new(1, -28, 0.5, -12),
+        Font            = Enum.Font.GothamBold,
+        TextSize        = 16,
+        Text            = "+",
+        AutoButtonColor = false,
+        Parent          = row,
+    })
+    corner(6, plusBtn)
+
+    dispatcher:Register(function(t)
+        row.BackgroundColor3      = t.Elevated
+        strokeInst.Color          = t.Stroke
+        label.TextColor3          = t.Text
+        minusBtn.BackgroundColor3 = t.Surface
+        minusBtn.TextColor3       = t.Text
+        plusBtn.BackgroundColor3  = t.Surface
+        plusBtn.TextColor3        = t.Text
+        valueBox.BackgroundColor3 = t.Surface
+        valueBox.TextColor3       = t.Primary
+    end)
+
+    local function set(v, silent)
+        v = math.clamp(v, minV, maxV)
+        -- Snap to increment
+        v = math.floor((v / step) + 0.5) * step
+        v = math.clamp(v, minV, maxV)
+        if v ~= val then
+            val = v
+            valueBox.Text = string.format(fmt, val)
+            if saveHook then saveHook(val) end
+            if not silent and opts.Callback then task.spawn(opts.Callback, val) end
+        else
+            valueBox.Text = string.format(fmt, val) -- always re-sync display
+        end
+    end
+
+    minusBtn.MouseButton1Click:Connect(function() set(val - step) end)
+    plusBtn.MouseButton1Click:Connect(function() set(val + step) end)
+
+    valueBox.FocusLost:Connect(function(enterPressed)
+        local num = tonumber(valueBox.Text)
+        if num then
+            set(num)
+        else
+            -- Revert to last good value on garbage input.
+            valueBox.Text = string.format(fmt, val)
+        end
+    end)
+
+    return {
+        frame   = row,
+        Set     = function(_, v, silent) set(v, silent) end,
+        Get     = function() return val end,
+        Destroy = function() row:Destroy() end,
+    }
+end
+
+-- Console (in-UI log output) --------------------------------------------------
+-- A tail-log pane with severity-colored lines. Useful for:
+--   * debugging your own script without leaving the game
+--   * showing user-facing status without spawning notifications for everything
+-- API: :Log(text), :Warn(text), :Error(text), :Clear()
+function Components.Console(parent, dispatcher, opts)
+    opts = opts or {}
+    local maxLines = opts.MaxLines or 200
+
+    local wrap = new("Frame", {
+        Size   = UDim2.new(1, 0, 0, opts.Height or 140),
+        Parent = parent,
+    })
+    corner(8, wrap)
+    local strokeInst = stroke(Color3.new(), 1, wrap)
+
+    local header = new("Frame", {
+        Size                   = UDim2.new(1, 0, 0, 24),
+        BackgroundTransparency = 1,
+        Parent                 = wrap,
+    })
+    local title = new("TextLabel", {
+        Size                   = UDim2.new(1, -60, 1, 0),
+        Position               = UDim2.new(0, 10, 0, 0),
+        BackgroundTransparency = 1,
+        Font                   = Enum.Font.GothamBold,
+        TextSize               = 12,
+        TextXAlignment         = Enum.TextXAlignment.Left,
+        Text                   = opts.Text or "CONSOLE",
+        Parent                 = header,
+    })
+    local clearBtn = new("TextButton", {
+        Size            = UDim2.new(0, 50, 0, 18),
+        Position        = UDim2.new(1, -56, 0.5, -9),
+        Font            = Enum.Font.GothamMedium,
+        TextSize        = 11,
+        Text            = "Clear",
+        AutoButtonColor = false,
+        Parent          = header,
+    })
+    corner(4, clearBtn)
+
+    local scroll = new("ScrollingFrame", {
+        Position                = UDim2.new(0, 0, 0, 24),
+        Size                    = UDim2.new(1, 0, 1, -24),
+        BackgroundTransparency  = 1,
+        BorderSizePixel         = 0,
+        ScrollBarThickness      = 4,
+        CanvasSize              = UDim2.new(0, 0, 0, 0),
+        AutomaticCanvasSize     = Enum.AutomaticSize.Y,
+        Parent                  = wrap,
+    })
+    padding(8, scroll)
+    local layout = new("UIListLayout", {
+        Padding   = UDim.new(0, 2),
+        SortOrder = Enum.SortOrder.LayoutOrder,
+        Parent    = scroll,
+    })
+
+    local lines = {}
+    local lineCount = 0
+
+    local function addLine(text, color)
+        lineCount = lineCount + 1
+        local lbl = new("TextLabel", {
+            Size                   = UDim2.new(1, 0, 0, 0),
+            AutomaticSize          = Enum.AutomaticSize.Y,
+            BackgroundTransparency = 1,
+            Font                   = Enum.Font.Code,
+            TextSize               = 12,
+            TextColor3             = color,
+            TextWrapped            = true,
+            TextXAlignment         = Enum.TextXAlignment.Left,
+            Text                   = text,
+            LayoutOrder            = lineCount,
+            Parent                 = scroll,
+        })
+        table.insert(lines, lbl)
+
+        -- Ring-buffer: drop the oldest when past the cap.
+        if #lines > maxLines then
+            local old = table.remove(lines, 1)
+            if old then old:Destroy() end
+        end
+
+        -- Autoscroll to bottom on the next frame, after layout has run.
+        task.defer(function()
+            if scroll.Parent then
+                scroll.CanvasPosition = Vector2.new(0, scroll.AbsoluteCanvasSize.Y)
+            end
+        end)
+    end
+
+    local api = {}
+    local theme
+
+    dispatcher:Register(function(t)
+        theme                      = t
+        wrap.BackgroundColor3      = t.Surface
+        strokeInst.Color           = t.Stroke
+        title.TextColor3           = t.SubText
+        clearBtn.BackgroundColor3  = t.Elevated
+        clearBtn.TextColor3        = t.Text
+        scroll.ScrollBarImageColor3 = t.Stroke
+    end)
+
+    function api:Log(text)
+        addLine("[info]  " .. tostring(text), theme and theme.Text or Color3.new(1, 1, 1))
+    end
+    function api:Warn(text)
+        addLine("[warn]  " .. tostring(text), theme and theme.Warning or Color3.fromRGB(255, 200, 80))
+    end
+    function api:Error(text)
+        addLine("[error] " .. tostring(text), theme and theme.Danger or Color3.fromRGB(255, 100, 100))
+    end
+    function api:Clear()
+        for _, l in ipairs(lines) do l:Destroy() end
+        table.clear(lines)
+        lineCount = 0
+    end
+
+    clearBtn.MouseButton1Click:Connect(function() api:Clear() end)
+
+    api.frame   = wrap
+    api.Destroy = function() wrap:Destroy() end
+    return api
+end
+
+-- Tooltip -------------------------------------------------------------------
+-- Attach a hover tooltip to any component returned from Add*(...).
+-- Usage: Tooltip.attach(component, "Hover text", dispatcher, bag)
+local Tooltip = {}
+
+function Tooltip.attach(component, text, dispatcher, bag)
+    if not component or not component.frame then return end
+    local frame = component.frame
+
+    local bubble
+    local function ensureBubble()
+        if bubble and bubble.Parent then return bubble end
+        bubble = new("TextLabel", {
+            Size                   = UDim2.new(0, 0, 0, 22),
+            AutomaticSize          = Enum.AutomaticSize.X,
+            AnchorPoint            = Vector2.new(0.5, 1),
+            BackgroundColor3       = dispatcher.theme.Elevated,
+            BorderSizePixel        = 0,
+            Font                   = Enum.Font.Gotham,
+            TextSize               = 12,
+            TextColor3             = dispatcher.theme.Text,
+            Text                   = " " .. text .. " ",
+            ZIndex                 = 100,
+            Visible                = false,
+            Parent                 = frame:FindFirstAncestorOfClass("ScreenGui") or frame,
+        })
+        corner(4, bubble)
+        stroke(dispatcher.theme.Stroke, 1, bubble)
+        return bubble
+    end
+
+    bag:Add(frame.MouseEnter:Connect(function()
+        local b = ensureBubble()
+        b.Text = " " .. text .. " "
+        b.Position = UDim2.new(
+            0, frame.AbsolutePosition.X + frame.AbsoluteSize.X / 2,
+            0, frame.AbsolutePosition.Y - 4
+        )
+        b.Visible = true
+    end))
+    bag:Add(frame.MouseLeave:Connect(function()
+        if bubble then bubble.Visible = false end
+    end))
+
+    -- Expose for chaining.
+    component.SetTooltip = function(_, newText) text = newText end
+    return component
+end
+
 -- ColorPicker (HSV canvas + hue bar) ------------------------------------------
 local function hsvToRgb(h, s, v)
     local c = Color3.fromHSV(h, s, v)
     return c
 end
 
-function Components.ColorPicker(parent, dispatcher, opts, saveHook)
+-- ColorPicker (HSV canvas + hue bar + hex input + alpha slider) ---------------
+-- v3 changes:
+--   * Now accepts `bag` so InputChanged / InputEnded listeners are cleaned up.
+--     v2 leaked two UIS listeners per color picker.
+--   * Optional `Alpha = true` exposes transparency (Callback receives (color, alpha)).
+--   * Hex input field: type "#ff8800" or "ff8800" and press Enter.
+function Components.ColorPicker(parent, dispatcher, bag, opts, saveHook)
     opts = opts or {}
     local default = opts.Default or Color3.fromRGB(120, 120, 255)
+    local withAlpha = opts.Alpha == true
+    local alpha     = opts.DefaultAlpha or 1
     local h, s, v = default:ToHSV()
     local open = false
 
@@ -1745,19 +2245,19 @@ function Components.ColorPicker(parent, dispatcher, opts, saveHook)
             draggingHue = true; updateHue(input)
         end
     end)
-    UserInputService.InputChanged:Connect(function(input)
+    bag:Add(UserInputService.InputChanged:Connect(function(input)
         if input.UserInputType ~= Enum.UserInputType.MouseMovement
             and input.UserInputType ~= Enum.UserInputType.Touch then return end
         if draggingSV  then updateSV(input)  end
         if draggingHue then updateHue(input) end
-    end)
-    UserInputService.InputEnded:Connect(function(input)
+    end))
+    bag:Add(UserInputService.InputEnded:Connect(function(input)
         if input.UserInputType == Enum.UserInputType.MouseButton1
             or input.UserInputType == Enum.UserInputType.Touch then
             draggingSV  = false
             draggingHue = false
         end
-    end)
+    end))
 
     header.MouseButton1Click:Connect(function()
         open = not open
@@ -1922,7 +2422,7 @@ function WaffleUI:CreateWindow(opts)
         if destroyWindow then destroyWindow() end
     end)
 
-    makeDraggable(titlebar, root, bag)
+    makeDraggable(titlebar, root, bag, true) -- v3: clamp window to viewport
 
     -- Body: sidebar + content
     local body = new("Frame", {
@@ -1997,12 +2497,14 @@ function WaffleUI:CreateWindow(opts)
         gripLine2.BackgroundColor3    = t.Stroke
     end)
 
-    -- Hotkey toggle (cancel-token safe)
+    -- Hotkey toggle (cancel-token safe + TextBox-aware)
     local visible = true
     local toggleToken = 0
     if opts.Keybind then
         bag:Add(UserInputService.InputBegan:Connect(function(input, processed)
             if processed then return end
+            -- v3 bug fix: don't swallow keystrokes while typing in any TextBox.
+            if UserInputService:GetFocusedTextBox() then return end
             if input.KeyCode == opts.Keybind then
                 visible = not visible
                 toggleToken = toggleToken + 1
@@ -2039,6 +2541,155 @@ function WaffleUI:CreateWindow(opts)
         self._activeTheme = resolved
         WaffleUI._activeTheme = resolved
         dispatcher:SetTheme(resolved)
+    end
+
+    -- v3 API additions ---------------------------------------------------------
+    function Window:SetTitle(s)
+        titleText.Text = s or ""
+    end
+
+    function Window:SetSubTitle(s)
+        subText.Text = s or ""
+    end
+
+    function Window:SetSize(w, h)
+        local target = UDim2.new(0, w, 0, h)
+        savedSize = target -- remember for minimize-restore
+        tween(root, MEDIUM, { Size = target })
+    end
+
+    function Window:SetPosition(x, y)
+        tween(root, MEDIUM, { Position = UDim2.new(0, x, 0, y) })
+    end
+
+    function Window:Show()
+        visible = true
+        root.Visible = true
+        tween(root, MEDIUM, { BackgroundTransparency = 0 })
+    end
+
+    function Window:Hide()
+        visible = false
+        tween(root, MEDIUM, { BackgroundTransparency = 1 })
+        task.delay(0.25, function()
+            if not visible and root.Parent then root.Visible = false end
+        end)
+    end
+
+    -- Confirm modal: a blocking (visually) yes/no prompt.
+    -- Options: { Title, Message, OnConfirm, OnCancel, ConfirmText, CancelText }
+    function Window:Confirm(o)
+        o = o or {}
+        local overlay = new("Frame", {
+            Size                   = UDim2.new(1, 0, 1, 0),
+            BackgroundColor3       = Color3.new(0, 0, 0),
+            BackgroundTransparency = 1,
+            BorderSizePixel        = 0,
+            ZIndex                 = 50,
+            Parent                 = root,
+        })
+
+        local panel = new("Frame", {
+            AnchorPoint      = Vector2.new(0.5, 0.5),
+            Position         = UDim2.new(0.5, 0, 0.5, 0),
+            Size             = UDim2.new(0, 320, 0, 0),
+            AutomaticSize    = Enum.AutomaticSize.Y,
+            BackgroundColor3 = dispatcher.theme.Surface,
+            ZIndex           = 51,
+            Parent           = overlay,
+        })
+        corner(10, panel)
+        stroke(dispatcher.theme.Stroke, 1, panel)
+        padding(16, panel)
+
+        new("UIListLayout", {
+            Padding   = UDim.new(0, 8),
+            SortOrder = Enum.SortOrder.LayoutOrder,
+            Parent    = panel,
+        })
+
+        new("TextLabel", {
+            Size                   = UDim2.new(1, 0, 0, 22),
+            BackgroundTransparency = 1,
+            Font                   = Enum.Font.GothamBold,
+            TextSize               = 16,
+            TextColor3             = dispatcher.theme.Text,
+            TextXAlignment         = Enum.TextXAlignment.Left,
+            Text                   = o.Title or "Are you sure?",
+            LayoutOrder            = 1,
+            Parent                 = panel,
+        })
+
+        new("TextLabel", {
+            Size                   = UDim2.new(1, 0, 0, 0),
+            AutomaticSize          = Enum.AutomaticSize.Y,
+            BackgroundTransparency = 1,
+            Font                   = Enum.Font.Gotham,
+            TextSize               = 13,
+            TextColor3             = dispatcher.theme.SubText,
+            TextWrapped            = true,
+            TextXAlignment         = Enum.TextXAlignment.Left,
+            Text                   = o.Message or "",
+            LayoutOrder            = 2,
+            Parent                 = panel,
+        })
+
+        local btnRow = new("Frame", {
+            Size                   = UDim2.new(1, 0, 0, 30),
+            BackgroundTransparency = 1,
+            LayoutOrder            = 3,
+            Parent                 = panel,
+        })
+        new("UIListLayout", {
+            FillDirection      = Enum.FillDirection.Horizontal,
+            HorizontalAlignment = Enum.HorizontalAlignment.Right,
+            Padding            = UDim.new(0, 8),
+            SortOrder          = Enum.SortOrder.LayoutOrder,
+            Parent             = btnRow,
+        })
+
+        local function close()
+            tween(overlay, QUICK, { BackgroundTransparency = 1 })
+            tween(panel,   QUICK, { Size = UDim2.new(0, 300, 0, panel.AbsoluteSize.Y) })
+            task.delay(0.2, function() overlay:Destroy() end)
+        end
+
+        local cancelBtn = new("TextButton", {
+            Size             = UDim2.new(0, 80, 1, 0),
+            BackgroundColor3 = dispatcher.theme.Elevated,
+            Font             = Enum.Font.GothamMedium,
+            TextSize         = 13,
+            TextColor3       = dispatcher.theme.Text,
+            Text             = o.CancelText or "Cancel",
+            AutoButtonColor  = false,
+            LayoutOrder      = 1,
+            Parent           = btnRow,
+        })
+        corner(6, cancelBtn)
+        stroke(dispatcher.theme.Stroke, 1, cancelBtn)
+        cancelBtn.MouseButton1Click:Connect(function()
+            close()
+            if o.OnCancel then task.spawn(o.OnCancel) end
+        end)
+
+        local confirmBtn = new("TextButton", {
+            Size             = UDim2.new(0, 90, 1, 0),
+            BackgroundColor3 = dispatcher.theme.Primary,
+            Font             = Enum.Font.GothamBold,
+            TextSize         = 13,
+            TextColor3       = Color3.new(1, 1, 1),
+            Text             = o.ConfirmText or "Confirm",
+            AutoButtonColor  = false,
+            LayoutOrder      = 2,
+            Parent           = btnRow,
+        })
+        corner(6, confirmBtn)
+        confirmBtn.MouseButton1Click:Connect(function()
+            close()
+            if o.OnConfirm then task.spawn(o.OnConfirm) end
+        end)
+
+        tween(overlay, QUICK, { BackgroundTransparency = 0.4 })
     end
 
     function Window:Notify(o)
@@ -2244,20 +2895,41 @@ function WaffleUI:CreateWindow(opts)
         end
         function tab:AddColorPicker(o)
             local hook = makeSaveHook(o and o.Flag)
-            local c = Components.ColorPicker(page, dispatcher, o, hook)
+            local c = Components.ColorPicker(page, dispatcher, bag, o, hook)
             if o and o.Flag and configData[o.Flag] then
                 local rgb = configData[o.Flag]
                 c:Set(Color3.new(rgb[1], rgb[2], rgb[3]))
             end
             table.insert(self._components, c); return c
         end
+        function tab:AddStepper(o)
+            local hook = makeSaveHook(o and o.Flag)
+            local c = Components.Stepper(page, dispatcher, o, hook)
+            if o and o.Flag and configData[o.Flag] ~= nil then c:Set(configData[o.Flag], true) end
+            table.insert(self._components, c); return c
+        end
+        function tab:AddConsole(o)
+            local c = Components.Console(page, dispatcher, o)
+            table.insert(self._components, c); return c
+        end
+
+        -- Attach a hover tooltip to any previously-created component.
+        function tab:AttachTooltip(component, text)
+            return Tooltip.attach(component, text, dispatcher, bag)
+        end
 
         function tab:Destroy()
             for _, c in ipairs(self._components) do pcall(c.Destroy, c) end
             page:Destroy()
             tabBtn:Destroy()
+            local wasActive = (Window._active == tab)
             for i, t in ipairs(Window._tabs) do
                 if t == tab then table.remove(Window._tabs, i); break end
+            end
+            -- v3 bug fix: after destroying the active tab, nothing was
+            -- rendered. Auto-activate the first remaining tab.
+            if wasActive and #Window._tabs > 0 then
+                Window._tabs[1]._activate()
             end
         end
 
